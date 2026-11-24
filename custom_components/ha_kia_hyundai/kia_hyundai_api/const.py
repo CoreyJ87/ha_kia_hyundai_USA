@@ -17,6 +17,7 @@ SENSITIVE_FIELD_NAMES = [
     "refresh_token",
     "rmtoken",
     "otpkey",
+    "svmImage",
 ]
 
 # Kia USA API (iOS app headers)

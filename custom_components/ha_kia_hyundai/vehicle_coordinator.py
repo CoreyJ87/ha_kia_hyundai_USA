@@ -15,6 +15,7 @@ from aiohttp import ClientError
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.util import dt as dt_util
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.debounce import Debouncer
 from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
@@ -67,6 +68,10 @@ class VehicleCoordinator(DataUpdateCoordinator):
         self.vehicle_name: str = vehicle_name
         self.vehicle_model: str = vehicle_model
         self.api_connection: ApiConnection = api_connection
+        # Newest surround view capture: {"image": bytes, "captured_at": str}.
+        self.surround_view: dict[str, Any] | None = None
+        self.surround_view_supported: bool = False
+        self.surround_view_capture_in_progress: bool = False
 
         request_refresh_debouncer = Debouncer(
             hass,
@@ -130,6 +135,65 @@ class VehicleCoordinator(DataUpdateCoordinator):
             request_refresh_debouncer=request_refresh_debouncer,
             always_update=False,
         )
+
+    async def async_load_surround_view(self) -> None:
+        """Read the stored surround view capture. Does not contact the car."""
+        self.surround_view = await self.api_connection.get_surround_view(
+            self.vehicle_id, background_poll=True
+        )
+        self.surround_view_supported = True
+
+    async def async_capture_surround_view(self) -> None:
+        """Ask the car for a new surround view capture.
+
+        The request is sent before this returns, so a refusal (for example
+        the limit of 3 requests per hour) reaches the caller. The new image
+        arrives up to two minutes later and is picked up in the background.
+        """
+        if self.surround_view_capture_in_progress:
+            raise HomeAssistantError(
+                "A surround view capture is already in progress"
+            )
+        self.surround_view_capture_in_progress = True
+        try:
+            previous_captured_at = (
+                await self.api_connection.request_surround_view_capture(
+                    self.vehicle_id
+                )
+            )
+        except BaseException:
+            self.surround_view_capture_in_progress = False
+            raise
+        self.config_entry.async_create_background_task(
+            self.hass,
+            self._async_wait_for_surround_view(previous_captured_at),
+            name=f"{DOMAIN}-{self.vehicle_name}-surround-view",
+        )
+
+    async def _async_wait_for_surround_view(
+        self, previous_captured_at: str | None
+    ) -> None:
+        """Store the new capture once the car has uploaded it."""
+        try:
+            capture = await self.api_connection.wait_for_surround_view(
+                self.vehicle_id, previous_captured_at
+            )
+            if capture is None:
+                _LOGGER.warning(
+                    "%s did not send a new surround view capture in time",
+                    self.vehicle_name,
+                )
+                return
+            self.surround_view = capture
+            self.async_update_listeners()
+        except ClientError as err:
+            _LOGGER.warning(
+                "Could not read the new surround view capture for %s: %s",
+                self.vehicle_name,
+                err,
+            )
+        finally:
+            self.surround_view_capture_in_progress = False
 
     @property
     def id(self) -> str:

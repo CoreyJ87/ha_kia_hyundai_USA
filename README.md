@@ -116,6 +116,10 @@ After authentication, the integration will display all vehicles found in your ac
 - Remote Start (starts vehicle with configured climate settings)
 - Remote Stop (stops remote-started vehicle)
 - Force Update (requests fresh data from vehicle - use sparingly)
+- Capture Surround View (Genesis only - asks the car for a new surround view picture; Genesis limits these to 3 requests per hour)
+
+### Images
+- Surround View (Genesis only - the newest surround view picture: four cameras and the top-down view. It updates only after you press Capture Surround View, and once when Home Assistant starts)
 
 ## Important Warnings
 

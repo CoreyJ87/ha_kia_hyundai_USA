@@ -8,6 +8,7 @@ Supports both:
 The API is nearly identical to Hyundai, just with different endpoints and brand indicator.
 """
 
+import base64
 import logging
 import asyncio
 
@@ -123,6 +124,38 @@ def _is_genesis_pin_error(exc: BaseException) -> bool:
     if isinstance(exc, PINLockedError):
         return True
     return "PIN" in str(exc).upper()
+
+
+# Surround view: how often to look for the new capture, and for how long.
+SVM_POLL_INTERVAL_SECONDS = 15
+SVM_POLL_TIMEOUT_SECONDS = 120
+
+
+def _newest_surround_view(response_json: dict) -> dict | None:
+    """Return the newest capture in a getSVMDetails response, or None.
+
+    Genesis keeps the last few captures. Each has one JPEG holding the four
+    cameras and the top-down view, and a capture time in vehicle local time.
+    """
+    details = [
+        entry.get("svmDetail") or {}
+        for entry in response_json.get("svmDetails") or []
+    ]
+    details = [detail for detail in details if detail.get("svmImage")]
+    if not details:
+        return None
+    newest = max(
+        details,
+        key=lambda detail: (detail.get("gpsDetail") or {}).get("time") or "",
+    )
+    try:
+        image = base64.b64decode(newest["svmImage"])
+    except ValueError:
+        return None
+    return {
+        "image": image,
+        "captured_at": (newest.get("gpsDetail") or {}).get("time"),
+    }
 
 
 class UsGenesis:
@@ -754,6 +787,83 @@ class UsGenesis:
             url=url,
             headers=headers,
         )
+
+    async def get_surround_view(
+            self,
+            vehicle_id: str,
+            *,
+            background_poll: bool = False,
+    ) -> dict | None:
+        """Return the newest surround view capture Genesis has stored.
+
+        This reads what the server already has. It does not contact the car.
+        """
+        await self._ensure_token_valid()
+
+        vehicle = await self.find_vehicle(vehicle_id)
+        headers = self._get_vehicle_headers(vehicle)
+        url = GENESIS_API_URL_BASE + "svm/getSVMDetails"
+        if background_poll:
+            response = await self._get_for_background_poll(url=url, headers=headers)
+        else:
+            response = await self._get_request_with_logging_and_errors_raised(
+                url=url,
+                headers=headers,
+            )
+        return _newest_surround_view(await response.json())
+
+    async def request_surround_view_capture(self, vehicle_id: str) -> str | None:
+        """Ask the car to take a new surround view capture.
+
+        This is a remote command. It wakes the car, and Genesis limits it to
+        3 requests per hour, so only call it when the user asks.
+
+        Returns the capture time of the newest capture before the request,
+        for wait_for_surround_view to compare against.
+        """
+        await self._ensure_token_valid()
+
+        vehicle = await self.find_vehicle(vehicle_id)
+        previous = await self.get_surround_view(vehicle_id)
+        previous_captured_at = previous["captured_at"] if previous else None
+
+        await self._post_request_with_logging_and_errors_raised(
+            url=GENESIS_API_URL_BASE + "svm/findMyCarSVM",
+            json_body={
+                "vin": vehicle.get("vin", vehicle.get("VIN", "")),
+                "username": self.username,
+                "gen": str(vehicle.get("generation", vehicle.get("gen", "2"))),
+                "blueLinkServicePin": self.pin,
+            },
+            headers=self._get_vehicle_headers(vehicle),
+        )
+        return previous_captured_at
+
+    async def wait_for_surround_view(
+            self,
+            vehicle_id: str,
+            previous_captured_at: str | None,
+            *,
+            poll_interval: float = SVM_POLL_INTERVAL_SECONDS,
+            timeout: float = SVM_POLL_TIMEOUT_SECONDS,
+    ) -> dict | None:
+        """Wait for a capture newer than previous_captured_at.
+
+        Returns the new capture, or None if it did not arrive in time.
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            await asyncio.sleep(poll_interval)
+            try:
+                capture = await self.get_surround_view(vehicle_id)
+            except AuthError:
+                raise
+            except ClientError as err:
+                _LOGGER.debug("Surround view not readable yet: %s", err)
+                continue
+            if capture and capture["captured_at"] != previous_captured_at:
+                return capture
+        return None
 
     async def lock(self, vehicle_id: str):
         """Lock the vehicle."""

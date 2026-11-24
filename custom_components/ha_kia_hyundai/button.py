@@ -1,8 +1,11 @@
 from logging import getLogger
 
+from aiohttp import ClientError
+
 from homeassistant.components.button import ButtonEntity, ButtonDeviceClass, ButtonEntityDescription
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import VehicleCoordinator, get_all_coordinators
@@ -24,6 +27,8 @@ async def async_setup_entry(
         if coordinator.can_remote_climate:
             entities.append(RemoteStartButton(coordinator=coordinator))
             entities.append(RemoteStopButton(coordinator=coordinator))
+        if coordinator.surround_view_supported:
+            entities.append(CaptureSurroundViewButton(coordinator=coordinator))
 
     async_add_entities(entities)
 
@@ -114,3 +119,30 @@ class RemoteStopButton(VehicleCoordinatorBaseEntity, ButtonEntity):
         )
         self.coordinator.async_update_listeners()
         await self.coordinator.async_request_refresh()
+
+
+class CaptureSurroundViewButton(VehicleCoordinatorBaseEntity, ButtonEntity):
+    """Button to ask the car for a new surround view capture.
+
+    Each press is a remote command, and Genesis limits these to 3 requests
+    per hour, so nothing in the integration presses it automatically.
+    """
+
+    def __init__(
+            self,
+            coordinator: VehicleCoordinator,
+    ):
+        super().__init__(coordinator, ButtonEntityDescription(
+            key="capture_surround_view",
+            name="Capture Surround View",
+            icon="mdi:camera",
+        ))
+
+    async def async_press(self) -> None:
+        """Request a new capture. The image updates when the car uploads it."""
+        try:
+            await self.coordinator.async_capture_surround_view()
+        except ClientError as err:
+            raise HomeAssistantError(
+                f"Surround view capture was not accepted: {err}"
+            ) from err

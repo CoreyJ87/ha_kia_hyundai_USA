@@ -413,6 +413,17 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry):
 
             coordinators[vehicle_id] = coordinator
 
+            # Surround view: read the stored capture once, so the image entity
+            # has something to show and so vehicles without it get no entities.
+            # This reads from the server and does not contact the car.
+            if hasattr(api_connection, "get_surround_view"):
+                try:
+                    await coordinator.async_load_surround_view()
+                except Exception as e:
+                    _LOGGER.info(
+                        "Surround view is not available for %s: %s", vehicle_name, e
+                    )
+
         if not coordinators:
             raise ConfigEntryError("No vehicles could be set up")
 
