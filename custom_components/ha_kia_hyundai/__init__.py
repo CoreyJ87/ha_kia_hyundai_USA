@@ -422,6 +422,11 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry):
         # Set up platforms
         await hass.config_entries.async_forward_entry_setups(config_entry, PLATFORMS)
 
+        # Apply a changed poll interval right away instead of at the next restart
+        config_entry.async_on_unload(
+            config_entry.add_update_listener(_async_apply_scan_interval)
+        )
+
         # Set up services (not async, don't await)
         async_setup_services(hass)
 
@@ -436,6 +441,32 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry):
     except Exception as err:
         _LOGGER.exception("Error setting up integration: %s", err)
         raise ConfigEntryError(f"Error setting up integration: {err}") from err
+
+
+async def _async_apply_scan_interval(
+    hass: HomeAssistant, config_entry: ConfigEntry
+) -> None:
+    """Apply the poll interval from the options to the running coordinators.
+
+    Runs whenever the config entry changes, so it does nothing unless the
+    interval is different from the one in use.
+    """
+    scan_interval = timedelta(
+        minutes=config_entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
+    )
+    for coordinator in get_all_coordinators(hass).values():
+        if coordinator.update_interval == scan_interval:
+            continue
+        _LOGGER.debug(
+            "Poll interval for %s changed from %s to %s",
+            coordinator.vehicle_name,
+            coordinator.update_interval,
+            scan_interval,
+        )
+        coordinator.update_interval = scan_interval
+        coordinator.async_update_listeners()
+        # Refreshing also restarts the poll timer with the new interval
+        await coordinator.async_request_refresh()
 
 
 async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:

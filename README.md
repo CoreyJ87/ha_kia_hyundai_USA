@@ -237,6 +237,7 @@ A reading of 95%+ indicates an excellent, fully charged battery.
 ## Update Frequency
 
 - **Default polling**: Every 10 minutes (configurable in integration options)
+- **Poll Interval entity**: each vehicle has a `Poll Interval` number entity with the same setting, so an automation can change it (for example poll every 2 minutes for a while after the car is unlocked, then go back to 10). It takes effect right away and survives restarts. Keep it at 10 minutes or more for normal use. Very short intervals held for a long time can get the account rate limited.
 - **After commands**: Automatic refresh after lock/unlock, climate start/stop
 
 ## Vehicle Compatibility

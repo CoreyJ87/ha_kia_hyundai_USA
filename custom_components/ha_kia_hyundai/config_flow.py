@@ -44,6 +44,8 @@ from .const import (
     CONF_VEHICLE_ID,
     CONF_VEHICLES,
     DEFAULT_SCAN_INTERVAL,
+    MIN_SCAN_INTERVAL,
+    MAX_SCAN_INTERVAL,
     CONFIG_FLOW_TEMP_VEHICLES,
     BRAND_KIA,
     BRAND_HYUNDAI,
@@ -65,7 +67,7 @@ class KiaUvoOptionFlowHandler(OptionsFlow):
                     default=config_entry.options.get(
                         CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
                     ),
-                ): vol.All(vol.Coerce(int), vol.Range(min=1, max=999)),
+                ): vol.All(vol.Coerce(int), vol.Range(min=MIN_SCAN_INTERVAL, max=MAX_SCAN_INTERVAL)),
             }
         )
 

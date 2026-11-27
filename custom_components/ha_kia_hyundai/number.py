@@ -6,13 +6,20 @@ from homeassistant.components.number import (
     NumberEntityDescription,
     NumberMode,
 )
-from homeassistant.const import PERCENTAGE, STATE_UNAVAILABLE
+from homeassistant.const import (
+    CONF_SCAN_INTERVAL,
+    PERCENTAGE,
+    STATE_UNAVAILABLE,
+    EntityCategory,
+    UnitOfTime,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from . import VehicleCoordinator, get_all_coordinators
+from .const import MAX_SCAN_INTERVAL, MIN_SCAN_INTERVAL
 from .vehicle_coordinator_base_entity import VehicleCoordinatorBaseEntity
 
 _LOGGER = getLogger(__name__)
@@ -43,6 +50,18 @@ NUMBER_DESCRIPTIONS: Final[tuple[NumberEntityDescription, ...]] = (
     ),
 )
 
+POLL_INTERVAL_DESCRIPTION: Final = NumberEntityDescription(
+    key="poll_interval",
+    name="Poll Interval",
+    icon="mdi:timer-sync-outline",
+    native_min_value=MIN_SCAN_INTERVAL,
+    native_max_value=MAX_SCAN_INTERVAL,
+    native_step=1,
+    native_unit_of_measurement=UnitOfTime.MINUTES,
+    mode=NumberMode.BOX,
+    entity_category=EntityCategory.CONFIG,
+)
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -53,6 +72,7 @@ async def async_setup_entry(
 
     entities = []
     for coordinator in coordinators.values():
+        entities.append(PollIntervalNumber(coordinator, POLL_INTERVAL_DESCRIPTION))
         for description in NUMBER_DESCRIPTIONS:
             if getattr(coordinator, description.key, None) is not None:
                 entities.append(
@@ -123,3 +143,28 @@ class ChargeLimitNumber(VehicleCoordinatorBaseEntity, NumberEntity, RestoreEntit
         # Invalidate the cache of the cached property
         self.__dict__.pop("state", None)
         self._attr_native_value = state
+
+
+class PollIntervalNumber(VehicleCoordinatorBaseEntity, NumberEntity):
+    """How often the vehicle status is polled, in minutes.
+
+    This is the same setting as the scan interval in the integration
+    options. Having it as an entity lets automations change it, for example
+    to poll faster for a while after a drive ends.
+    """
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the poll interval that is in use."""
+        interval = self.coordinator.update_interval
+        if interval is None:
+            return None
+        return round(interval.total_seconds() / 60)
+
+    async def async_set_native_value(self, value: float) -> None:
+        """Save the new poll interval; the update listener applies it."""
+        config_entry = self.coordinator.config_entry
+        self.hass.config_entries.async_update_entry(
+            config_entry,
+            options={**config_entry.options, CONF_SCAN_INTERVAL: int(value)},
+        )
